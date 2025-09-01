@@ -1,110 +1,220 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
-
-import { Collapsible } from '@/components/Collapsible';
-import { ExternalLink } from '@/components/ExternalLink';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
-import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  FlatList,
+  StyleSheet,
+  TouchableOpacity,
+  Alert,
+} from 'react-native';
+import { router } from 'expo-router';
+import { collection, getDocs, orderBy, query, doc, updateDoc } from 'firebase/firestore';
+import { auth, db } from '@/config/firebase';
+import { getOrCreateConversation } from '@/utils/conversations';
+import { useColorScheme } from '@/hooks/useColorScheme';
+import { Colors } from '@/constants/Colors';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 
-export default function TabTwoScreen() {
+interface User {
+  uid: string;
+  displayName: string;
+  email: string;
+  createdAt: any;
+}
+
+export default function UsersScreen() {
+  const [users, setUsers] = useState<User[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [startingChat, setStartingChat] = useState<string | null>(null);
+  const colorScheme = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
+  const currentUser = auth.currentUser;
+
+  const fetchUsers = async () => {
+    try {
+      const usersRef = collection(db, 'users');
+      const q = query(usersRef, orderBy('createdAt', 'desc'));
+      const usersSnapshot = await getDocs(q);
+      
+      const usersList = usersSnapshot.docs
+        .map(doc => ({
+          uid: doc.id,
+          ...doc.data(),
+        } as User))
+        .filter(user => user.uid !== currentUser?.uid);
+      
+      setUsers(usersList);
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      Alert.alert('Error', 'Failed to load users');
+    }
+  };
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchUsers();
+    setRefreshing(false);
+  };
+
+  const startChat = async (user: User) => {
+    if (!currentUser) return;
+    
+    setStartingChat(user.uid);
+    try {
+      const conversationId = await getOrCreateConversation(
+        currentUser.uid,
+        user.uid,
+        user.displayName || 'Unknown'
+      );
+      
+      // Update the current user's name in the conversation
+      const conversationRef = doc(db, 'conversations', conversationId);
+      await updateDoc(conversationRef, {
+        [`participantNames.${currentUser.uid}`]: currentUser.displayName || 'Anonymous'
+      });
+      
+      router.push({
+        pathname: '/chat/[id]',
+        params: {
+          id: conversationId,
+          userId: user.uid,
+          userName: user.displayName || 'Unknown'
+        }
+      });
+    } catch (error) {
+      console.error('Error starting chat:', error);
+      Alert.alert('Error', 'Failed to start chat');
+    } finally {
+      setStartingChat(null);
+    }
+  };
+
+  const renderUser = ({ item }: { item: User }) => (
+    <TouchableOpacity
+      style={[styles.userContainer, { backgroundColor: colors.background, borderBottomColor: colors.icon + '30' }]}
+      onPress={() => startChat(item)}
+      disabled={startingChat === item.uid}
+    >
+      <View style={[styles.avatarContainer, { backgroundColor: colors.tint }]}>
+        <Text style={styles.avatarText}>
+          {item.displayName ? item.displayName[0].toUpperCase() : '?'}
+        </Text>
+      </View>
+      <View style={styles.userInfo}>
+        <Text style={[styles.userName, { color: colors.text }]}>{item.displayName || 'Anonymous'}</Text>
+        <Text style={[styles.userEmail, { color: colors.icon }]}>{item.email}</Text>
+      </View>
+      {startingChat === item.uid ? (
+        <Text style={[styles.loadingText, { color: colors.icon }]}>...</Text>
+      ) : (
+        <View style={[styles.startChatButton, { backgroundColor: colors.tint }]}>
+          <IconSymbol name="message.fill" size={18} color="white" />
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
-      headerImage={
-        <IconSymbol
-          size={310}
-          color="#808080"
-          name="chevron.left.forwardslash.chevron.right"
-          style={styles.headerImage}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Explore</ThemedText>
-      </ThemedView>
-      <ThemedText>This app includes example code to help you get started.</ThemedText>
-      <Collapsible title="File-based routing">
-        <ThemedText>
-          This app has two screens:{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/explore.tsx</ThemedText>
-        </ThemedText>
-        <ThemedText>
-          The layout file in <ThemedText type="defaultSemiBold">app/(tabs)/_layout.tsx</ThemedText>{' '}
-          sets up the tab navigator.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/router/introduction">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Android, iOS, and web support">
-        <ThemedText>
-          You can open this project on Android, iOS, and the web. To open the web version, press{' '}
-          <ThemedText type="defaultSemiBold">w</ThemedText> in the terminal running this project.
-        </ThemedText>
-      </Collapsible>
-      <Collapsible title="Images">
-        <ThemedText>
-          For static images, you can use the <ThemedText type="defaultSemiBold">@2x</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">@3x</ThemedText> suffixes to provide files for
-          different screen densities
-        </ThemedText>
-        <Image source={require('@/assets/images/react-logo.png')} style={{ alignSelf: 'center' }} />
-        <ExternalLink href="https://reactnative.dev/docs/images">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Custom fonts">
-        <ThemedText>
-          Open <ThemedText type="defaultSemiBold">app/_layout.tsx</ThemedText> to see how to load{' '}
-          <ThemedText style={{ fontFamily: 'SpaceMono' }}>
-            custom fonts such as this one.
-          </ThemedText>
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/versions/latest/sdk/font">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Light and dark mode components">
-        <ThemedText>
-          This template has light and dark mode support. The{' '}
-          <ThemedText type="defaultSemiBold">useColorScheme()</ThemedText> hook lets you inspect
-          what the user&apos;s current color scheme is, and so you can adjust UI colors accordingly.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Animations">
-        <ThemedText>
-          This template includes an example of an animated component. The{' '}
-          <ThemedText type="defaultSemiBold">components/HelloWave.tsx</ThemedText> component uses
-          the powerful <ThemedText type="defaultSemiBold">react-native-reanimated</ThemedText>{' '}
-          library to create a waving hand animation.
-        </ThemedText>
-        {Platform.select({
-          ios: (
-            <ThemedText>
-              The <ThemedText type="defaultSemiBold">components/ParallaxScrollView.tsx</ThemedText>{' '}
-              component provides a parallax effect for the header image.
-            </ThemedText>
-          ),
-        })}
-      </Collapsible>
-    </ParallaxScrollView>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { borderBottomColor: colors.icon + '30' }]}>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Start New Chat</Text>
+        <Text style={[styles.headerSubtitle, { color: colors.icon }]}>
+          {users.length} {users.length === 1 ? 'user' : 'users'} available
+        </Text>
+      </View>
+      
+      <FlatList
+        data={users}
+        renderItem={renderUser}
+        keyExtractor={(item) => item.uid}
+        contentContainerStyle={styles.listContent}
+        refreshing={refreshing}
+        onRefresh={onRefresh}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <IconSymbol name="person.2.slash" size={60} color={colors.icon} />
+            <Text style={[styles.emptyText, { color: colors.icon }]}>No other users yet</Text>
+          </View>
+        }
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  headerImage: {
-    color: '#808080',
-    bottom: -90,
-    left: -35,
-    position: 'absolute',
+  container: {
+    flex: 1,
   },
-  titleContainer: {
+  header: {
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  headerSubtitle: {
+    fontSize: 14,
+  },
+  listContent: {
+    flexGrow: 1,
+  },
+  userContainer: {
     flexDirection: 'row',
-    gap: 8,
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+  },
+  avatarContainer: {
+    width: 45,
+    height: 45,
+    borderRadius: 22.5,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  avatarText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  userInfo: {
+    flex: 1,
+  },
+  userName: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  userEmail: {
+    fontSize: 14,
+  },
+  startChatButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: 100,
+  },
+  emptyText: {
+    fontSize: 16,
+    marginTop: 10,
   },
 });
